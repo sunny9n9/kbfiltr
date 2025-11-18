@@ -36,8 +36,10 @@ Environment:
     Kernel mode only.
 
 --*/
-
 #include "kbfiltr.h"
+#ifndef KEY_BREAK_FLAG
+#define KEY_BREAK_FLAG 0x0001
+#endif
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (INIT, DriverEntry)
@@ -237,7 +239,8 @@ Return Value:
     // needed. Also look at the toaster filter driver sample for an alternate
     // approach to providing sideband communication.
     //
-    status = KbFiltr_CreateRawPdo(hDevice, ++InstanceNo);
+    //status = KbFiltr_CreateRawPdo(hDevice, ++InstanceNo); 
+    // Won't be needing this for now ***********************
 
     return status;
 }
@@ -805,6 +808,24 @@ Return Value:
     hDevice = WdfWdmDeviceGetWdfDeviceHandle(DeviceObject);
 
     devExt = FilterGetData(hDevice);
+
+    PKEYBOARD_INPUT_DATA cur = InputDataStart;
+
+    while (cur < InputDataEnd) {
+
+        BOOLEAN isBreak = (cur->Flags & KEY_BREAK_FLAG) ? TRUE : FALSE;
+
+        // Print scancode, make/break, and maybe ExtraInformation
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID,
+            DPFLTR_INFO_LEVEL,
+            "[kbfilter] ScanCode: 0x%02X  %s  (Flags=0x%x)\n",
+            cur->MakeCode,
+            isBreak ? "UP" : "DOWN",
+            cur->Flags);
+
+        cur++;
+    }
+
 
     (*(PSERVICE_CALLBACK_ROUTINE)(ULONG_PTR) devExt->UpperConnectData.ClassService)(
         devExt->UpperConnectData.ClassDeviceObject,

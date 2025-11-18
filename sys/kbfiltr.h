@@ -192,12 +192,12 @@ typedef struct _RPDO_DEVICE_DATA
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(RPDO_DEVICE_DATA, PdoGetData)
 
-
-NTSTATUS
-KbFiltr_CreateRawPdo(
-    WDFDEVICE       Device,
-    ULONG           InstanceNo
-);
+// Won't be using user mode part 
+//NTSTATUS
+//KbFiltr_CreateRawPdo(
+//    WDFDEVICE       Device,
+//    ULONG           InstanceNo
+//);
 
 
 
