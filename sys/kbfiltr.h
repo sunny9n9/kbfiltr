@@ -69,6 +69,10 @@ typedef struct _DEVICE_EXTENSION
     // Number of creates sent down
     //
     LONG EnableCount;
+    
+	PKEYBOARD_INPUT_DATA FilterBuffer;
+	WDFMEMORY FilterMemory;
+	ULONG FilterBufferEntries;
 
     //
     // The real connect data that this driver reports to

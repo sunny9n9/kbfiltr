@@ -1,4 +1,4 @@
-/*--
+﻿/*--
 
 Copyright (c) Microsoft Corporation.  All rights reserved.
 
@@ -40,6 +40,7 @@ Environment:
 #ifndef KEY_BREAK_FLAG
 #define KEY_BREAK_FLAG 0x0001
 #endif
+#define FILTER_MAX_INPUT 1024
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (INIT, DriverEntry)
@@ -204,6 +205,22 @@ Return Value:
         DebugPrint( ("WdfIoQueueCreate failed 0x%x\n", status));
         return status;
     }
+
+    // allocate a buffer to simulate or alter key presses
+    status = WdfMemoryCreate(
+        WDF_NO_OBJECT_ATTRIBUTES,
+        NonPagedPoolNx,
+        'fBuf',
+        FILTER_MAX_INPUT * sizeof(KEYBOARD_INPUT_DATA),
+        &filterExt->FilterMemory,
+        (PVOID*)&filterExt->FilterBuffer
+    );
+    if (!NT_SUCCESS(status)) {
+		DebugPrint(("WdfMemoryCreate failed 0x%x\n", status));
+        return status;
+    }
+    // point to our buffer
+    filterExt->FilterBufferEntries = FILTER_MAX_INPUT;
 
     //
     // Create a new queue to handle IOCTLs that will be forwarded to us from
@@ -764,6 +781,29 @@ Return Value:
     *ContinueProcessing = TRUE;
     return retVal;
 }
+// ---------------- MISSION FAILED, INFORMATION TOO ATOMIC TO 
+//  RELIABLY DETECT COPILOT KEYSTROKES, USE HIGHER LEVER FILTERS --------------------
+//BOOLEAN
+//IsCopilotDownBurst(PKEYBOARD_INPUT_DATA p)
+//{
+//    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+//        "[filter] COPILOT DOQN detected (ignored)\n");
+//
+//    return (p[0].MakeCode == 0x5B && !(p[0].Flags & KEY_BREAK_FLAG)) &&
+//        (p[1].MakeCode == 0x2A && !(p[1].Flags & KEY_BREAK_FLAG)) &&
+//        (p[2].MakeCode == 0x6E && !(p[2].Flags & KEY_BREAK_FLAG));
+//}
+//
+//BOOLEAN
+//IsCopilotUpBurst(PKEYBOARD_INPUT_DATA p)
+//{
+//    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+//        "[filter] COPILOT YUP detected thus injected K key\n");
+//
+//    return (p[0].MakeCode == 0x6E && (p[0].Flags & KEY_BREAK_FLAG)) &&
+//        (p[1].MakeCode == 0x2A && (p[1].Flags & KEY_BREAK_FLAG)) &&
+//        (p[2].MakeCode == 0x5B && (p[2].Flags & KEY_BREAK_FLAG));
+//}
 
 VOID
 KbFilter_ServiceCallback(
@@ -810,6 +850,13 @@ Return Value:
     devExt = FilterGetData(hDevice);
 
     PKEYBOARD_INPUT_DATA cur = InputDataStart;
+	ULONG inCount = (ULONG)(InputDataEnd - InputDataStart);
+	ULONG outIndex = 0;
+    PKEYBOARD_INPUT_DATA outBuf; // declare
+	outBuf = devExt->FilterBuffer; // point to our buffer
+
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+        "[filter] IN packet count = %lu\n", inCount);
 
     while (cur < InputDataEnd) {
 
@@ -825,13 +872,70 @@ Return Value:
 
         cur++;
     }
+    cur = InputDataStart;
+    while (cur < InputDataEnd)
+    {
+        //ULONG remaining = (ULONG)(InputDataEnd - cur);
+        BOOLEAN isBreak = (cur->Flags & KEY_BREAK_FLAG) ? TRUE : FALSE;
 
+        if (cur->MakeCode == 0x19) {
+            cur++;
+			continue; // skip 'P' key
+        }
+        else if (cur->MakeCode == 0x32) {
+            //cur->MakeCode = 0x31; can't do this, Make code belongs to 
+			// lower level driver, shouldn't be modified
+            // replace 'M' with 'N'
+            outBuf[outIndex] = *cur;      // copy entry
+            outBuf[outIndex].MakeCode = 0x31;   // replace M with N
+            outIndex++;
+            cur++;
+            continue;
+        }
+        else if (cur->MakeCode == 0x2C && !isBreak) { // only on keydodwn
+            // Copy original Z-down
+            outBuf[outIndex] = *cur;
+            outIndex++;
 
+            // Synthetic UP
+            outBuf[outIndex] = *cur;
+            outBuf[outIndex].Flags |= KEY_BREAK_FLAG;
+            outIndex++;
+
+            // Synthetic DOWN
+            outBuf[outIndex] = *cur;
+            outBuf[outIndex].Flags &= ~KEY_BREAK_FLAG;
+            outIndex++;
+
+            // Synthetic UP
+            outBuf[outIndex] = *cur;
+            outBuf[outIndex].Flags |= KEY_BREAK_FLAG;
+            outIndex++;
+
+            cur++;
+            continue;
+        }
+        
+        // Otherwise copy this entry normally
+        outBuf[outIndex++] = *cur;
+        cur++;
+    }
+
+	PKEYBOARD_INPUT_DATA outStart = outBuf;
+	PKEYBOARD_INPUT_DATA outEnd = outBuf + outIndex;
+
+	*InputDataConsumed = inCount; // we consumed all input
+    ULONG fakeConsumed = 0;
+
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+        "[filter] OUT packet count = %lu\n", outIndex);
+
+	// Call the original service callback with our modified data
     (*(PSERVICE_CALLBACK_ROUTINE)(ULONG_PTR) devExt->UpperConnectData.ClassService)(
         devExt->UpperConnectData.ClassDeviceObject,
-        InputDataStart,
-        InputDataEnd,
-        InputDataConsumed);
+        outStart    ,
+        outEnd,
+        &fakeConsumed);
 }
 
 VOID
