@@ -805,6 +805,50 @@ Return Value:
 //        (p[2].MakeCode == 0x5B && (p[2].Flags & KEY_BREAK_FLAG));
 //}
 
+BOOLEAN _SkipKey(
+    _In_reads_(count) const USHORT* keyCodes, // list of keys to skip
+    _In_ ULONG count, // total elements in aforementioned list
+    _In_ const KEYBOARD_INPUT_DATA* currKey // current key in question
+)
+{
+    // ULONG is used everywhere bcs thats what windows uses mostly especially older stuff
+    for (ULONG i = 0; i < count; i++) {
+        if (currKey->MakeCode == keyCodes[i]) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+BOOLEAN _ReplaceKey(
+    IN const USHORT* keyCodes, // list of keys to replace
+    IN ULONG count, // number of entries in aforementioned list
+    IN const KEYBOARD_INPUT_DATA* currKey, // current key press
+    OUT PULONG keyIdx
+) 
+{
+    for (ULONG i = 0; i < count; i++) {
+        if (currKey->MakeCode == keyCodes[i]) {
+            *keyIdx = i;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+BOOLEAN _DupeKeys(
+    IN const USHORT* keyCodes, // list of keys to replace
+    IN ULONG count, // number of entries in aforementioned list
+    IN const KEYBOARD_INPUT_DATA* currKey // current key press
+) {
+    for (ULONG i = 0; i < count; i++) {
+        if (currKey->MakeCode == keyCodes[i]) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 VOID
 KbFilter_ServiceCallback(
     IN PDEVICE_OBJECT  DeviceObject,
@@ -858,6 +902,8 @@ Return Value:
     DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
         "[filter] IN packet count = %lu\n", inCount);
 
+# if DBG 
+
     while (cur < InputDataEnd) {
 
         BOOLEAN isBreak = (cur->Flags & KEY_BREAK_FLAG) ? TRUE : FALSE;
@@ -872,27 +918,36 @@ Return Value:
 
         cur++;
     }
+#endif
+
     cur = InputDataStart;
+    enum {KEYS_TO_SKIP = 1, KEYS_TO_REPLACE = 1, KEYS_TO_AUGMENT = 1};
+    USHORT skip_keyCodes[KEYS_TO_SKIP] = { 0x19 };
+    USHORT replace_keyCodes[KEYS_TO_REPLACE] = { 0x32 };
+    USHORT replaceWith_keyCodes[KEYS_TO_REPLACE] = { 0x31 };
+    USHORT keys_to_augment[KEYS_TO_AUGMENT] = { 0x2C };
+    ULONG replace_with = 0;
     while (cur < InputDataEnd)
     {
         //ULONG remaining = (ULONG)(InputDataEnd - cur);
         BOOLEAN isBreak = (cur->Flags & KEY_BREAK_FLAG) ? TRUE : FALSE;
 
-        if (cur->MakeCode == 0x19) {
+        // Skip keys call
+        if (_SkipKey(skip_keyCodes, KEYS_TO_SKIP, cur)) {
             cur++;
-			continue; // skip 'P' key
+            continue; 
         }
-        else if (cur->MakeCode == 0x32) {
+        else if (_ReplaceKey(replace_keyCodes, KEYS_TO_REPLACE, cur, &replace_with)) {
             //cur->MakeCode = 0x31; can't do this, Make code belongs to 
 			// lower level driver, shouldn't be modified
             // replace 'M' with 'N'
             outBuf[outIndex] = *cur;      // copy entry
-            outBuf[outIndex].MakeCode = 0x31;   // replace M with N
+            outBuf[outIndex].MakeCode = replaceWith_keyCodes[replace_with];   // replace keys
             outIndex++;
             cur++;
             continue;
         }
-        else if (cur->MakeCode == 0x2C && !isBreak) { // only on keydodwn
+        else if (_DupeKeys(keys_to_augment, KEYS_TO_AUGMENT, cur) && !isBreak) { // only on keydodwn
             // Copy original Z-down
             outBuf[outIndex] = *cur;
             outIndex++;
